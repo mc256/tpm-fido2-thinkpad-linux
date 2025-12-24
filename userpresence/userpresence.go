@@ -101,7 +101,7 @@ func (up *UserPresence) promptFingerprint(req *request, prompt string) {
 	// Run fprintd-verify with context timeout
 	log.Printf("userpresence: launching fprintd-verify")
 	fprintCmd := exec.CommandContext(ctx, "fprintd-verify")
-	fprintCmd.Stdout = os.Stdout
+	fprintCmd.Stdout = os.Stderr // Must not use stdout - Native Messaging uses it
 	fprintCmd.Stderr = os.Stderr
 
 	err := fprintCmd.Run()

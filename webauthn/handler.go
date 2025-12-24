@@ -2,6 +2,7 @@ package webauthn
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,16 @@ import (
 	"github.com/psanford/tpm-fido/ctap2"
 	"github.com/psanford/tpm-fido/nativemsg"
 )
+
+// hashPRFSalt hashes a PRF salt according to the WebAuthn PRF extension spec:
+// SHA-256("WebAuthn PRF" || 0x00 || salt)
+func hashPRFSalt(salt []byte) []byte {
+	h := sha256.New()
+	h.Write([]byte("WebAuthn PRF"))
+	h.Write([]byte{0x00})
+	h.Write(salt)
+	return h.Sum(nil)
+}
 
 // Handler handles WebAuthn requests via Native Messaging
 type Handler struct {
@@ -184,19 +195,24 @@ func (h *Handler) handleCreate(ctx context.Context, requestID, origin string, op
 
 		// If PRF eval was requested, compute the outputs
 		if prfEval != nil {
-			salt1, err := base64.StdEncoding.DecodeString(prfEval.First)
-			if err != nil || len(salt1) != 32 {
-				log.Printf("WebAuthn Create: Invalid PRF salt1: %v", err)
+			log.Printf("WebAuthn Create: PRF salt1 received: %q (len=%d)", prfEval.First, len(prfEval.First))
+			rawSalt1, err := base64.StdEncoding.DecodeString(prfEval.First)
+			if err != nil {
+				log.Printf("WebAuthn Create: Invalid PRF salt1 base64: %v", err)
 				return NewErrorResponse("create", requestID, ErrNameTypeError, "Invalid PRF salt")
 			}
+			// Hash the salt per WebAuthn PRF extension spec
+			salt1 := hashPRFSalt(rawSalt1)
+			log.Printf("WebAuthn Create: PRF salt1 hashed: %d bytes -> 32 bytes", len(rawSalt1))
 
 			var salt2 []byte
 			if prfEval.Second != "" {
-				salt2, err = base64.StdEncoding.DecodeString(prfEval.Second)
-				if err != nil || len(salt2) != 32 {
-					log.Printf("WebAuthn Create: Invalid PRF salt2: %v", err)
+				rawSalt2, err := base64.StdEncoding.DecodeString(prfEval.Second)
+				if err != nil {
+					log.Printf("WebAuthn Create: Invalid PRF salt2 base64: %v", err)
 					return NewErrorResponse("create", requestID, ErrNameTypeError, "Invalid PRF salt")
 				}
+				salt2 = hashPRFSalt(rawSalt2)
 			}
 
 			output1, output2, err := h.ctap2Handler.ComputePRF(result.CredentialID, salt1, salt2)
