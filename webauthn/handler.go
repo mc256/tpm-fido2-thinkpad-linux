@@ -46,6 +46,12 @@ func (h *Handler) HandleRequest(ctx context.Context, msg json.RawMessage) interf
 
 	log.Printf("WebAuthn: Received %s request, requestId=%s, origin=%s", envelope.Type, envelope.RequestID, envelope.Origin)
 
+	// H1: Validate that origin is a well-formed HTTPS URL
+	if err := validateOrigin(envelope.Origin); err != nil {
+		log.Printf("WebAuthn: Invalid origin %q: %v", envelope.Origin, err)
+		return NewErrorResponse(envelope.Type, envelope.RequestID, ErrNameTypeError, "Invalid origin: must be an HTTPS URL")
+	}
+
 	switch envelope.Type {
 	case "create":
 		return h.handleCreate(ctx, envelope.RequestID, envelope.Origin, envelope.Options)
@@ -63,6 +69,12 @@ func (h *Handler) handleCreate(ctx context.Context, requestID, origin string, op
 	if err := json.Unmarshal(optionsRaw, &options); err != nil {
 		log.Printf("WebAuthn Create: Failed to parse options: %v", err)
 		return NewErrorResponse("create", requestID, ErrNameTypeError, "Invalid create options")
+	}
+
+	// H2: Validate RP ID is a registrable domain suffix of the origin
+	if err := validateRPID(origin, options.RP.ID); err != nil {
+		log.Printf("WebAuthn Create: RP ID validation failed: %v", err)
+		return NewErrorResponse("create", requestID, ErrNameTypeError, "RP ID does not match origin")
 	}
 
 	// Decode challenge
@@ -265,6 +277,12 @@ func (h *Handler) handleGet(ctx context.Context, requestID, origin string, optio
 	if err := json.Unmarshal(optionsRaw, &options); err != nil {
 		log.Printf("WebAuthn Get: Failed to parse options: %v", err)
 		return NewErrorResponse("get", requestID, ErrNameTypeError, "Invalid get options")
+	}
+
+	// H2: Validate RP ID is a registrable domain suffix of the origin
+	if err := validateRPID(origin, options.RPID); err != nil {
+		log.Printf("WebAuthn Get: RP ID validation failed: %v", err)
+		return NewErrorResponse("get", requestID, ErrNameTypeError, "RP ID does not match origin")
 	}
 
 	// Decode challenge
