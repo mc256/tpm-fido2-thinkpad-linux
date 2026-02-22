@@ -18,7 +18,7 @@ CC := musl-gcc
 CGO_ENABLED := 1
 STATIC_LDFLAGS := -linkmode external -extldflags '-static' $(LDFLAGS)
 
-.PHONY: all clean build static test install uninstall dist dist-complete help
+.PHONY: all clean build static test install install-daemon uninstall dist dist-complete help
 
 # Default target
 all: static
@@ -59,6 +59,23 @@ install: static
 	@sed 's|__HOME__|$(HOME)|g' com.vitorpy.tpmfido.json > $(HOME)/.config/chromium/NativeMessagingHosts/com.vitorpy.tpmfido.json
 	@echo "Installed to $(HOME)/bin/$(BINARY_NAME)"
 	@echo "Native messaging manifest installed for Chrome/Chromium"
+
+# Install daemon mode (virtual HID device)
+install-daemon: static-nocgo
+	install -D -m 755 $(BINARY_NAME) $(HOME)/bin/$(BINARY_NAME)
+	install -D -m 644 contrib/tpm-fido.service $(HOME)/.config/systemd/user/tpm-fido.service
+	@echo ""
+	@echo "Binary installed to $(HOME)/bin/$(BINARY_NAME)"
+	@echo "Systemd user service installed."
+	@echo ""
+	@echo "Udev rules and uhid module config require sudo:"
+	@echo "  sudo cp contrib/90-tpm-fido-uhid.rules /etc/udev/rules.d/"
+	@echo "  sudo cp contrib/uhid.conf /etc/modules-load.d/"
+	@echo "  sudo udevadm control --reload-rules && sudo udevadm trigger"
+	@echo "  sudo modprobe uhid"
+	@echo ""
+	@echo "Then start the service:"
+	@echo "  systemctl --user enable --now tpm-fido"
 
 # Uninstall from local system
 uninstall:
@@ -159,6 +176,7 @@ help:
 	@echo "  make static-nocgo  - Build pure Go static binary (no C deps)"
 	@echo "  make test          - Run tests"
 	@echo "  make install       - Install binary and Chrome manifest locally"
+	@echo "  make install-daemon - Install daemon mode (virtual HID device)"
 	@echo "  make uninstall     - Remove installed files"
 	@echo "  make dist          - Create distribution tarball (binary only)"
 	@echo "  make dist-complete - Create complete distribution (binary + extension)"

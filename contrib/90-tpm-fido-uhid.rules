@@ -1,0 +1,15 @@
+# Allow user access to /dev/uhid for creating virtual HID devices
+KERNEL=="uhid", MODE="0660", GROUP="plugdev"
+
+# Tag virtual FIDO2 hidraw device for snap browser access.
+# uhid devices don't have USB-style idVendor/idProduct sysfs attrs,
+# so we match on the HID parent kernel name which encodes bus:vid:pid
+# (0003=BUS_USB, 1209=VID, F1D0=PID).
+
+# Chromium snap
+SUBSYSTEM=="hidraw", KERNEL=="hidraw*", KERNELS=="0003:1209:F1D0.*", TAG+="snap_chromium_chromium"
+SUBSYSTEM=="hidraw", KERNEL=="hidraw*", KERNELS=="0003:1209:F1D0.*", RUN+="/usr/lib/snapd/snap-device-helper $env{ACTION} snap_chromium_chromium $devpath $major:$minor"
+
+# Firefox snap
+SUBSYSTEM=="hidraw", KERNEL=="hidraw*", KERNELS=="0003:1209:F1D0.*", TAG+="snap_firefox_firefox"
+SUBSYSTEM=="hidraw", KERNEL=="hidraw*", KERNELS=="0003:1209:F1D0.*", RUN+="/usr/lib/snapd/snap-device-helper $env{ACTION} snap_firefox_firefox $devpath $major:$minor"

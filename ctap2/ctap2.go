@@ -59,6 +59,11 @@ type Handler struct {
 	aaguid   [16]byte
 	ecdhKey  *ecdsa.PrivateKey // Ephemeral key for hmac-secret
 
+	// IsPlatform controls GetInfo response:
+	//   true  = platform authenticator (plat=true, transports=["internal"])
+	//   false = roaming authenticator via HID (plat=false, transports=["usb"])
+	IsPlatform bool
+
 	// State for GetNextAssertion
 	assertionState *assertionState
 }

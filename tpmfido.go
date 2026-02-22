@@ -6,9 +6,12 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/psanford/tpm-fido/ctap2"
+	"github.com/psanford/tpm-fido/fidohid"
 	"github.com/psanford/tpm-fido/memory"
 	"github.com/psanford/tpm-fido/nativemsg"
 	"github.com/psanford/tpm-fido/tpm"
@@ -19,6 +22,7 @@ import (
 var (
 	backend = flag.String("backend", "tpm", "Backend to use: tpm or memory")
 	device  = flag.String("device", "/dev/tpmrm0", "TPM device path")
+	mode    = flag.String("mode", "native", "Operating mode: native (Chrome extension) or daemon (virtual HID device)")
 )
 
 func main() {
@@ -28,7 +32,7 @@ func main() {
 	log.SetOutput(os.Stderr)
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
-	log.Printf("tpm-fido starting with backend=%s", *backend)
+	log.Printf("tpm-fido starting with backend=%s mode=%s", *backend, *mode)
 
 	// Initialize the signer backend
 	var signer ctap2.Signer
@@ -71,13 +75,55 @@ func main() {
 	ctap2Handler := ctap2.NewHandler(signer, presence, storage)
 	log.Printf("CTAP2 handler initialized")
 
-	// Create WebAuthn handler
+	switch *mode {
+	case "native":
+		runNativeMode(ctap2Handler)
+	case "daemon":
+		runDaemonMode(ctap2Handler)
+	default:
+		log.Fatalf("Unknown mode: %s (use 'native' or 'daemon')", *mode)
+	}
+}
+
+// runNativeMode runs as a Chrome Native Messaging host
+func runNativeMode(ctap2Handler *ctap2.Handler) {
+	ctap2Handler.IsPlatform = true
+
 	handler := webauthn.NewHandler(ctap2Handler)
 	log.Printf("WebAuthn handler initialized")
 
-	// Run the Native Messaging loop
 	ctx := context.Background()
 	runNativeMessaging(ctx, handler)
+}
+
+// runDaemonMode creates a virtual FIDO2 HID device and handles CTAPHID traffic
+func runDaemonMode(ctap2Handler *ctap2.Handler) {
+	ctap2Handler.IsPlatform = false
+
+	dev, err := fidohid.New("tpm-fido", ctap2Handler)
+	if err != nil {
+		log.Fatalf("Failed to create virtual FIDO2 device: %v", err)
+	}
+
+	// Set up signal handling for clean shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+
+	go func() {
+		sig := <-sigCh
+		log.Printf("Received signal %v, shutting down", sig)
+		cancel()
+	}()
+
+	log.Printf("Virtual FIDO2 HID device daemon started")
+
+	if err := dev.Run(ctx); err != nil && err != context.Canceled {
+		log.Fatalf("Device error: %v", err)
+	}
+
+	dev.Close()
+	log.Printf("Daemon stopped")
 }
 
 // runNativeMessaging runs the Native Messaging I/O loop

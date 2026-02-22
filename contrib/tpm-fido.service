@@ -1,0 +1,12 @@
+[Unit]
+Description=TPM-FIDO2 Virtual Security Key
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/bin/tpm-fido --mode=daemon
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
