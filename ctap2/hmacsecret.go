@@ -47,10 +47,20 @@ func (h *Handler) processHmacSecret(credentialID []byte, hmacSecretRaw interface
 	}
 
 	// Get platform's public key from COSE format
+	curve := elliptic.P256()
+	x := new(big.Int).SetBytes(input.KeyAgreement.X)
+	y := new(big.Int).SetBytes(input.KeyAgreement.Y)
+
+	// H4: Validate that the public key point is on the P-256 curve
+	// to prevent invalid curve attacks
+	if !curve.IsOnCurve(x, y) {
+		return nil, errors.New("invalid ECDH public key: point is not on the P-256 curve")
+	}
+
 	platformPubKey := &ecdsa.PublicKey{
-		Curve: elliptic.P256(),
-		X:     new(big.Int).SetBytes(input.KeyAgreement.X),
-		Y:     new(big.Int).SetBytes(input.KeyAgreement.Y),
+		Curve: curve,
+		X:     x,
+		Y:     y,
 	}
 
 	// Perform ECDH using our ephemeral private key
