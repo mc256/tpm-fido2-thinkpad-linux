@@ -4,7 +4,7 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/bin/tpm-fido --mode=daemon
+ExecStart=%h/bin/tpm-fido --mode=daemon --tray
 Restart=on-failure
 RestartSec=3
 

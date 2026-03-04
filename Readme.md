@@ -21,6 +21,7 @@ Other laptops with a TPM 2.0 and an fprintd-compatible fingerprint reader should
 - **PRF extension**: hmac-secret support for deriving cryptographic material from credentials
 - **Resident keys**: Discoverable credentials stored locally
 - **Multi-browser**: Works with Chromium (snap), Firefox (snap), Google Chrome, and native builds
+- **System tray toggle**: GNOME top bar icon to enable/disable the virtual key (e.g. to switch to a physical YubiKey)
 - **Systemd service**: Runs as a user service, starts on login
 
 ## Quick Start
@@ -61,6 +62,20 @@ sudo usermod -aG plugdev $USER
 
 # Enroll a fingerprint (if not already done)
 fprintd-enroll
+```
+
+## System Tray Icon
+
+When run with `--tray` (the default in the systemd service), a fingerprint icon appears in the GNOME top bar. This lets you toggle the virtual FIDO2 device on and off without restarting the daemon — useful when you want to use a physical YubiKey instead.
+
+- **Active** (filled fingerprint): virtual key is active, browsers will use it
+- **Disabled** (slashed fingerprint): virtual key is off, plug in your YubiKey
+
+The tray uses the D-Bus StatusNotifierItem protocol via `fyne.io/systray` (pure Go, no CGo or GTK). It works with Ubuntu's pre-installed `gnome-shell-extension-appindicator`.
+
+To run without the tray icon (headless):
+```bash
+tpm-fido --mode=daemon
 ```
 
 ## Architecture

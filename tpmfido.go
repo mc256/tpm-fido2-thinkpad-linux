@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 
 	"github.com/psanford/tpm-fido/ctap2"
@@ -15,14 +16,16 @@ import (
 	"github.com/psanford/tpm-fido/memory"
 	"github.com/psanford/tpm-fido/nativemsg"
 	"github.com/psanford/tpm-fido/tpm"
+	"github.com/psanford/tpm-fido/tray"
 	"github.com/psanford/tpm-fido/userpresence"
 	"github.com/psanford/tpm-fido/webauthn"
 )
 
 var (
-	backend = flag.String("backend", "tpm", "Backend to use: tpm or memory")
-	device  = flag.String("device", "/dev/tpmrm0", "TPM device path")
-	mode    = flag.String("mode", "native", "Operating mode: native (Chrome extension) or daemon (virtual HID device)")
+	backend  = flag.String("backend", "tpm", "Backend to use: tpm or memory")
+	device   = flag.String("device", "/dev/tpmrm0", "TPM device path")
+	mode     = flag.String("mode", "native", "Operating mode: native (Chrome extension) or daemon (virtual HID device)")
+	showTray = flag.Bool("tray", false, "Show system tray icon for toggling the virtual device (daemon mode only)")
 )
 
 func main() {
@@ -96,16 +99,25 @@ func runNativeMode(ctap2Handler *ctap2.Handler) {
 	runNativeMessaging(ctx, handler)
 }
 
-// runDaemonMode creates a virtual FIDO2 HID device and handles CTAPHID traffic
+// runDaemonMode creates a virtual FIDO2 HID device and handles CTAPHID traffic.
+// If --tray is set, it also shows a system tray icon for toggling the device.
 func runDaemonMode(ctap2Handler *ctap2.Handler) {
 	ctap2Handler.IsPlatform = false
 
+	if *showTray {
+		runDaemonWithTray(ctap2Handler)
+	} else {
+		runDaemonHeadless(ctap2Handler)
+	}
+}
+
+// runDaemonHeadless runs the virtual FIDO2 device without a tray icon.
+func runDaemonHeadless(ctap2Handler *ctap2.Handler) {
 	dev, err := fidohid.New("tpm-fido", ctap2Handler)
 	if err != nil {
 		log.Fatalf("Failed to create virtual FIDO2 device: %v", err)
 	}
 
-	// Set up signal handling for clean shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
@@ -123,6 +135,83 @@ func runDaemonMode(ctap2Handler *ctap2.Handler) {
 	}
 
 	dev.Close()
+	log.Printf("Daemon stopped")
+}
+
+// runDaemonWithTray runs the virtual FIDO2 device with a system tray icon.
+// The tray event loop runs on the main goroutine; the uhid device runs in
+// a background goroutine and can be toggled on/off from the tray menu.
+func runDaemonWithTray(ctap2Handler *ctap2.Handler) {
+	var (
+		mu     sync.Mutex
+		dev    *fidohid.Device
+		cancel context.CancelFunc
+	)
+
+	// startDevice creates and runs the virtual HID device in a goroutine.
+	startDevice := func() {
+		mu.Lock()
+		defer mu.Unlock()
+
+		if dev != nil {
+			return // already running
+		}
+
+		d, err := fidohid.New("tpm-fido", ctap2Handler)
+		if err != nil {
+			log.Printf("Failed to create virtual FIDO2 device: %v", err)
+			return
+		}
+
+		ctx, c := context.WithCancel(context.Background())
+		dev = d
+		cancel = c
+
+		go func() {
+			log.Printf("Virtual FIDO2 HID device started")
+			if err := d.Run(ctx); err != nil && err != context.Canceled {
+				log.Printf("Device error: %v", err)
+			}
+			d.Close()
+			log.Printf("Virtual FIDO2 HID device stopped")
+		}()
+	}
+
+	// stopDevice destroys the virtual HID device.
+	stopDevice := func() {
+		mu.Lock()
+		defer mu.Unlock()
+
+		if cancel != nil {
+			cancel()
+			cancel = nil
+		}
+		if dev != nil {
+			dev.Close()
+			dev = nil
+		}
+	}
+
+	// Handle SIGTERM/SIGINT for clean shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		sig := <-sigCh
+		log.Printf("Received signal %v, shutting down", sig)
+		stopDevice()
+		os.Exit(0)
+	}()
+
+	// Start the device immediately
+	startDevice()
+
+	// Run the tray on the main goroutine (blocks until quit)
+	t := tray.New(startDevice, stopDevice, func() {
+		stopDevice()
+	})
+
+	log.Printf("Starting system tray icon")
+	t.Run()
 	log.Printf("Daemon stopped")
 }
 
