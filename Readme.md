@@ -22,6 +22,7 @@ Other laptops with a TPM 2.0 and an fprintd-compatible fingerprint reader should
 - **Resident keys**: Discoverable credentials stored locally
 - **Multi-browser**: Works with Chromium (snap), Firefox (snap), Google Chrome, and native builds
 - **System tray toggle**: GNOME top bar icon to enable/disable the virtual key (e.g. to switch to a physical YubiKey)
+- **YubiKey auto-switch**: Automatically disables the virtual key when a physical YubiKey is plugged in and re-enables it on removal
 - **Systemd service**: Runs as a user service, starts on login
 
 ## Quick Start
@@ -72,6 +73,15 @@ When run with `--tray` (the default in the systemd service), a fingerprint icon 
 - **Disabled** (slashed fingerprint): virtual key is off, plug in your YubiKey
 
 The tray uses the D-Bus StatusNotifierItem protocol via `fyne.io/systray` (pure Go, no CGo or GTK). It works with Ubuntu's pre-installed `gnome-shell-extension-appindicator`.
+
+### YubiKey Auto-Switch
+
+When a physical YubiKey (Yubico VID `1050`) is plugged in, the daemon automatically disables the virtual FIDO2 device so the browser uses the YubiKey. When the YubiKey is removed, the virtual device is re-enabled. This is controlled by a checkbox in the tray menu ("Auto-switch on YubiKey") and is on by default.
+
+To start with auto-switch disabled:
+```bash
+tpm-fido --mode=daemon --tray --auto-switch=false
+```
 
 To run without the tray icon (headless):
 ```bash

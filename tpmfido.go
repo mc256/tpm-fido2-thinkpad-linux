@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/psanford/tpm-fido/ctap2"
 	"github.com/psanford/tpm-fido/fidohid"
@@ -17,6 +18,7 @@ import (
 	"github.com/psanford/tpm-fido/nativemsg"
 	"github.com/psanford/tpm-fido/tpm"
 	"github.com/psanford/tpm-fido/tray"
+	"github.com/psanford/tpm-fido/usbmon"
 	"github.com/psanford/tpm-fido/userpresence"
 	"github.com/psanford/tpm-fido/webauthn"
 )
@@ -25,7 +27,8 @@ var (
 	backend  = flag.String("backend", "tpm", "Backend to use: tpm or memory")
 	device   = flag.String("device", "/dev/tpmrm0", "TPM device path")
 	mode     = flag.String("mode", "native", "Operating mode: native (Chrome extension) or daemon (virtual HID device)")
-	showTray = flag.Bool("tray", false, "Show system tray icon for toggling the virtual device (daemon mode only)")
+	showTray   = flag.Bool("tray", false, "Show system tray icon for toggling the virtual device (daemon mode only)")
+	autoSwitch = flag.Bool("auto-switch", true, "Automatically disable virtual key when a YubiKey is plugged in (tray mode only)")
 )
 
 func main() {
@@ -143,9 +146,12 @@ func runDaemonHeadless(ctap2Handler *ctap2.Handler) {
 // a background goroutine and can be toggled on/off from the tray menu.
 func runDaemonWithTray(ctap2Handler *ctap2.Handler) {
 	var (
-		mu     sync.Mutex
-		dev    *fidohid.Device
-		cancel context.CancelFunc
+		mu              sync.Mutex
+		dev             *fidohid.Device
+		devCancel       context.CancelFunc
+		autoSwitchOn    = *autoSwitch
+		stoppedByAuto   bool // true if auto-switch disabled the device
+		yubiKeyPresent  bool
 	)
 
 	// startDevice creates and runs the virtual HID device in a goroutine.
@@ -165,7 +171,7 @@ func runDaemonWithTray(ctap2Handler *ctap2.Handler) {
 
 		ctx, c := context.WithCancel(context.Background())
 		dev = d
-		cancel = c
+		devCancel = c
 
 		go func() {
 			log.Printf("Virtual FIDO2 HID device started")
@@ -182,9 +188,9 @@ func runDaemonWithTray(ctap2Handler *ctap2.Handler) {
 		mu.Lock()
 		defer mu.Unlock()
 
-		if cancel != nil {
-			cancel()
-			cancel = nil
+		if devCancel != nil {
+			devCancel()
+			devCancel = nil
 		}
 		if dev != nil {
 			dev.Close()
@@ -193,11 +199,13 @@ func runDaemonWithTray(ctap2Handler *ctap2.Handler) {
 	}
 
 	// Handle SIGTERM/SIGINT for clean shutdown
+	monCtx, monCancel := context.WithCancel(context.Background())
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
 		sig := <-sigCh
 		log.Printf("Received signal %v, shutting down", sig)
+		monCancel()
 		stopDevice()
 		os.Exit(0)
 	}()
@@ -205,12 +213,82 @@ func runDaemonWithTray(ctap2Handler *ctap2.Handler) {
 	// Start the device immediately
 	startDevice()
 
-	// Run the tray on the main goroutine (blocks until quit)
-	t := tray.New(startDevice, stopDevice, func() {
-		stopDevice()
-	})
+	// Create the tray with auto-switch callback.
+	// Declare t first so closures can reference it.
+	var t *tray.Tray
+	t = tray.New(
+		func() { // onEnable
+			stoppedByAuto = false
+			startDevice()
+		},
+		func() { // onDisable
+			stoppedByAuto = false
+			stopDevice()
+		},
+		func() { // onQuit
+			monCancel()
+			stopDevice()
+		},
+		func(enabled bool) { // onAutoSwitchChanged
+			mu.Lock()
+			autoSwitchOn = enabled
+			wasStoppedByAuto := stoppedByAuto
+			present := yubiKeyPresent
+			mu.Unlock()
 
-	log.Printf("Starting system tray icon")
+			if !enabled && wasStoppedByAuto {
+				log.Printf("auto-switch disabled, re-enabling virtual device")
+				stoppedByAuto = false
+				startDevice()
+				t.SetActive(true)
+			} else if enabled && present {
+				log.Printf("auto-switch enabled with YubiKey present, disabling virtual device")
+				stoppedByAuto = true
+				stopDevice()
+				t.SetActive(false)
+			}
+		},
+	)
+	t.SetAutoSwitch(autoSwitchOn)
+
+	// Start the USB monitor for YubiKey detection
+	mon := &usbmon.Monitor{
+		VendorID: "1050", // Yubico
+		Interval: 2 * time.Second,
+		OnInsert: func(product string) {
+			mu.Lock()
+			yubiKeyPresent = true
+			enabled := autoSwitchOn
+			mu.Unlock()
+
+			t.SetYubiKeyDetected(true, product)
+			if enabled {
+				log.Printf("YubiKey inserted, auto-disabling virtual device")
+				stoppedByAuto = true
+				stopDevice()
+				t.SetActive(false)
+			}
+		},
+		OnRemove: func() {
+			mu.Lock()
+			yubiKeyPresent = false
+			enabled := autoSwitchOn
+			wasStoppedByAuto := stoppedByAuto
+			mu.Unlock()
+
+			t.SetYubiKeyDetected(false, "")
+			if enabled && wasStoppedByAuto {
+				log.Printf("YubiKey removed, auto-enabling virtual device")
+				stoppedByAuto = false
+				startDevice()
+				t.SetActive(true)
+			}
+		},
+	}
+
+	go mon.Run(monCtx)
+
+	log.Printf("Starting system tray icon (auto-switch=%v)", autoSwitchOn)
 	t.Run()
 	log.Printf("Daemon stopped")
 }

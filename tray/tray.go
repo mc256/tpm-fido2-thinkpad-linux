@@ -22,24 +22,29 @@ var iconInactive []byte
 // Tray manages the system tray icon and menu for toggling the virtual
 // FIDO2 device.
 type Tray struct {
-	onEnable  func()
-	onDisable func()
-	onQuit    func()
+	onEnable             func()
+	onDisable            func()
+	onQuit               func()
+	onAutoSwitchChanged  func(bool)
 
-	toggle *systray.MenuItem
-	status *systray.MenuItem
-	active bool
+	toggle     *systray.MenuItem
+	status     *systray.MenuItem
+	autoSwitch *systray.MenuItem
+	yubiStatus *systray.MenuItem
+	active     bool
 }
 
 // New creates a new Tray. The callbacks are invoked when the user clicks
 // the corresponding menu items. onEnable/onDisable toggle the virtual
-// HID device; onQuit stops the daemon.
-func New(onEnable, onDisable, onQuit func()) *Tray {
+// HID device; onQuit stops the daemon; onAutoSwitchChanged is called
+// when the auto-switch checkbox is toggled.
+func New(onEnable, onDisable, onQuit func(), onAutoSwitchChanged func(bool)) *Tray {
 	return &Tray{
-		onEnable:  onEnable,
-		onDisable: onDisable,
-		onQuit:    onQuit,
-		active:    true, // device starts enabled
+		onEnable:            onEnable,
+		onDisable:           onDisable,
+		onQuit:              onQuit,
+		onAutoSwitchChanged: onAutoSwitchChanged,
+		active:              true, // device starts enabled
 	}
 }
 
@@ -57,12 +62,37 @@ func (t *Tray) SetActive(active bool) {
 		systray.SetIcon(iconActive)
 		systray.SetTooltip("TPM FIDO: Active")
 		t.status.SetTitle("TPM FIDO: Active")
-		t.toggle.SetTitle("Disable (use YubiKey)")
+		t.toggle.SetTitle("Disable Fingerprint Key")
 	} else {
 		systray.SetIcon(iconInactive)
 		systray.SetTooltip("TPM FIDO: Disabled")
 		t.status.SetTitle("TPM FIDO: Disabled")
-		t.toggle.SetTitle("Enable virtual key")
+		t.toggle.SetTitle("Enable Fingerprint Key")
+	}
+}
+
+// SetAutoSwitch updates the auto-switch checkbox state.
+func (t *Tray) SetAutoSwitch(enabled bool) {
+	if t.autoSwitch == nil {
+		return
+	}
+	if enabled {
+		t.autoSwitch.Check()
+	} else {
+		t.autoSwitch.Uncheck()
+	}
+}
+
+// SetYubiKeyDetected shows or hides the YubiKey status menu item.
+func (t *Tray) SetYubiKeyDetected(detected bool, name string) {
+	if t.yubiStatus == nil {
+		return
+	}
+	if detected {
+		t.yubiStatus.SetTitle(name + " detected")
+		t.yubiStatus.Show()
+	} else {
+		t.yubiStatus.Hide()
 	}
 }
 
@@ -74,7 +104,15 @@ func (t *Tray) onReady() {
 
 	systray.AddSeparator()
 
-	t.toggle = systray.AddMenuItem("Disable (use YubiKey)", "Toggle virtual FIDO2 device")
+	t.toggle = systray.AddMenuItem("Disable Fingerprint Key", "Toggle virtual FIDO2 device")
+
+	systray.AddSeparator()
+
+	t.autoSwitch = systray.AddMenuItemCheckbox("Auto-switch on YubiKey", "Automatically disable virtual key when YubiKey is plugged in", true)
+
+	t.yubiStatus = systray.AddMenuItem("", "")
+	t.yubiStatus.Disable() // non-clickable
+	t.yubiStatus.Hide()    // hidden until a YubiKey is detected
 
 	systray.AddSeparator()
 
@@ -95,6 +133,17 @@ func (t *Tray) onReady() {
 					log.Printf("tray: user requested enable")
 					t.onEnable()
 					t.SetActive(true)
+				}
+			case <-t.autoSwitch.ClickedCh:
+				if t.autoSwitch.Checked() {
+					t.autoSwitch.Uncheck()
+				} else {
+					t.autoSwitch.Check()
+				}
+				checked := t.autoSwitch.Checked()
+				log.Printf("tray: auto-switch toggled to %v", checked)
+				if t.onAutoSwitchChanged != nil {
+					t.onAutoSwitchChanged(checked)
 				}
 			case <-mQuit.ClickedCh:
 				log.Printf("tray: user requested quit")
