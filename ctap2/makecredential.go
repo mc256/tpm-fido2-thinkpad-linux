@@ -2,15 +2,12 @@ package ctap2
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/rand"
 	"crypto/sha256"
 	"log"
 	"math/big"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/psanford/tpm-fido/attestation"
 )
 
 // MakeCredential handles the authenticatorMakeCredential command
@@ -152,28 +149,14 @@ func (h *Handler) MakeCredential(ctx context.Context, req *MakeCredentialRequest
 
 	authDataBytes := authData.Marshal()
 
-	// Build attestation signature: sign(authData || clientDataHash)
-	toSign := append(authDataBytes, req.ClientDataHash...)
-	sigHash := sha256.Sum256(toSign)
-
-	sig, err := ecdsa.SignASN1(rand.Reader, attestation.PrivateKey, sigHash[:])
-	if err != nil {
-		log.Printf("CTAP2 MakeCredential: Attestation sign error: %s", err)
-		return StatusOther, nil
-	}
-
-	// Build attestation statement (packed format with x5c)
-	attStmt := map[string]interface{}{
-		"alg": COSEAlgES256,
-		"sig": sig,
-		"x5c": [][]byte{attestation.CertDer},
-	}
-
-	// Build response
+	// Build response using self-attestation ("none" format): no attestation
+	// certificate or signature, just the authenticator data. Avoids relying
+	// parties that strictly validate attestation certificate fields (e.g.
+	// requiring a Subject Country code) rejecting our self-signed cert.
 	resp := &MakeCredentialResponse{
-		Fmt:      "packed",
+		Fmt:      "none",
 		AuthData: authDataBytes,
-		AttStmt:  attStmt,
+		AttStmt:  map[string]interface{}{},
 	}
 
 	encoded, err := ctapEncMode.Marshal(resp)
@@ -309,25 +292,14 @@ func (h *Handler) MakeCredentialDirect(ctx context.Context, params *MakeCredenti
 
 	authDataBytes := authData.Marshal()
 
-	// Build attestation signature: sign(authData || clientDataHash)
-	toSign := append(authDataBytes, params.ClientDataHash...)
-	sigHash := sha256.Sum256(toSign)
-
-	sig, err := ecdsa.SignASN1(rand.Reader, attestation.PrivateKey, sigHash[:])
-	if err != nil {
-		log.Printf("CTAP2 MakeCredentialDirect: Attestation sign error: %s", err)
-		return nil, err
-	}
-
-	// Build attestation object (CBOR-encoded)
+	// Build attestation object (CBOR-encoded) using self-attestation ("none"
+	// format): no attestation certificate or signature. Avoids relying
+	// parties that strictly validate attestation certificate fields (e.g.
+	// requiring a Subject Country code) rejecting our self-signed cert.
 	attObj := map[string]interface{}{
-		"fmt":      "packed",
+		"fmt":      "none",
 		"authData": authDataBytes,
-		"attStmt": map[string]interface{}{
-			"alg": COSEAlgES256,
-			"sig": sig,
-			"x5c": [][]byte{attestation.CertDer},
-		},
+		"attStmt":  map[string]interface{}{},
 	}
 
 	attestationObject, err := ctapEncMode.Marshal(attObj)
