@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/psanford/tpm-fido/config"
 	"github.com/psanford/tpm-fido/ctap2"
 	"github.com/psanford/tpm-fido/fidohid"
 	"github.com/psanford/tpm-fido/memory"
@@ -61,15 +62,22 @@ func main() {
 		log.Fatalf("Unknown backend: %s (use 'tpm' or 'memory')", *backend)
 	}
 
-	// Initialize user presence handler
-	presence := userpresence.New()
-	log.Printf("User presence handler initialized")
-
-	// Initialize credential storage for resident keys
+	// Resolve home directory (used for config and credential storage)
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		log.Fatalf("Failed to get home directory: %v", err)
 	}
+
+	// Load optional user configuration (e.g. which finger to use for
+	// fingerprint verification). Missing/invalid config falls back to
+	// default behavior.
+	cfg := config.Load(homeDir)
+
+	// Initialize user presence handler
+	presence := userpresence.New(cfg.Finger)
+	log.Printf("User presence handler initialized")
+
+	// Initialize credential storage for resident keys
 	storagePath := filepath.Join(homeDir, ".local", "share", "tpm-fido", "credentials.json")
 	storage, err := ctap2.NewCredentialStorage(storagePath)
 	if err != nil {

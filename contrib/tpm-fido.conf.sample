@@ -1,0 +1,10 @@
+# tpm-fido configuration
+#
+# Copy this file to ~/.config/tpm-fido/config and uncomment/edit the
+# settings you want. If this file is absent, unreadable, or a value is
+# invalid, tpm-fido falls back to its default (automatic) behavior.
+
+# Which enrolled finger fprintd-verify should use for fingerprint checks.
+# Valid: left-thumb, left-index-finger, left-middle-finger, left-ring-finger, left-little-finger
+# Same with `right-`
+#FPRINTD_FINGER=right-index-finger
