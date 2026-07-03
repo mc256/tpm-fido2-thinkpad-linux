@@ -150,6 +150,41 @@ journalctl --user -u tpm-fido -f
 systemctl --user restart tpm-fido
 ```
 
+## Configuration
+
+tpm-fido reads an optional config file from `~/.config/tpm-fido/config`. It uses
+a simple `KEY=VALUE` format, one setting per line, with `#` starting a comment
+(inline comments are supported too). If the file is missing, unreadable, or a
+value is invalid, tpm-fido falls back to its default behavior — no restart-time
+errors, no crashes.
+
+A sample file with all supported settings is at
+[`contrib/tpm-fido.conf.sample`](contrib/tpm-fido.conf.sample); copy it to
+`~/.config/tpm-fido/config` and edit as needed:
+
+```bash
+mkdir -p ~/.config/tpm-fido
+cp contrib/tpm-fido.conf.sample ~/.config/tpm-fido/config
+```
+
+### `FPRINTD_FINGER` — which finger to verify
+
+By default, `fprintd-verify` picks the enrolled finger automatically. To pin
+verification to a specific finger, set `FPRINTD_FINGER` to one of:
+
+```
+left-thumb, left-index-finger, left-middle-finger, left-ring-finger, left-little-finger
+```
+Same with `right-`.
+
+```
+# ~/.config/tpm-fido/config
+FPRINTD_FINGER=right-index-finger
+```
+
+Use `fprintd-list $USER` to see which fingers you have enrolled, and
+`fprintd-enroll -f <finger>` to enroll a specific one.
+
 ## How It Works
 
 **Registration (MakeCredential):**

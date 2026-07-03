@@ -14,6 +14,10 @@ import (
 type UserPresence struct {
 	mu            sync.Mutex
 	activeRequest *request
+
+	// finger is the fprintd finger name to pass via `fprintd-verify -f`.
+	// Empty means let fprintd pick automatically (original behavior).
+	finger string
 }
 
 type request struct {
@@ -30,9 +34,11 @@ type Result struct {
 	Error error
 }
 
-// New creates a new UserPresence handler
-func New() *UserPresence {
-	return &UserPresence{}
+// New creates a new UserPresence handler. finger, if non-empty, is passed to
+// `fprintd-verify -f <finger>` to pin verification to a specific enrolled
+// finger. If empty, fprintd chooses automatically (original behavior).
+func New(finger string) *UserPresence {
+	return &UserPresence{finger: finger}
 }
 
 // ConfirmPresence requests user presence confirmation via fingerprint
@@ -99,8 +105,12 @@ func (up *UserPresence) promptFingerprint(req *request, prompt string) {
 	}
 
 	// Run fprintd-verify with context timeout
-	log.Printf("userpresence: launching fprintd-verify")
-	fprintCmd := exec.CommandContext(ctx, "fprintd-verify")
+	var args []string
+	if up.finger != "" {
+		args = []string{"-f", up.finger}
+	}
+	log.Printf("userpresence: launching fprintd-verify %v", args)
+	fprintCmd := exec.CommandContext(ctx, "fprintd-verify", args...)
 	fprintCmd.Stdout = os.Stderr // Must not use stdout - Native Messaging uses it
 	fprintCmd.Stderr = os.Stderr
 
